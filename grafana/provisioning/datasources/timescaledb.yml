@@ -7,12 +7,14 @@ datasources:
     url: timescaledb:5432
     database: trading_data
     user: trading_user
+    uid: P40AE60E18F02DE32
     secureJsonData:
       password: secure_password_123
     jsonData:
       sslmode: disable
       postgresVersion: 1500
       timescaledb: true
+      database: trading_data
     editable: true
     isDefault: true
 

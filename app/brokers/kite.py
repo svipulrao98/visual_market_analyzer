@@ -172,10 +172,14 @@ class KiteBroker(BrokerInterface):
             ]
             logger.info(f"Unsubscribed from {len(instruments)} instruments")
 
-    async def fetch_historical(
-        self, instrument: int, from_date: datetime, to_date: datetime, interval: str
+    async def fetch_historical_candles(
+        self,
+        instrument_token: int,
+        from_date: datetime,
+        to_date: datetime,
+        interval: str,
     ) -> List[Dict]:
-        """Fetch historical data from Kite."""
+        """Fetch historical candle data from Kite."""
         # Ensure we have a valid token
         await self._ensure_authenticated()
 
@@ -193,18 +197,18 @@ class KiteBroker(BrokerInterface):
             data = await asyncio.get_event_loop().run_in_executor(
                 None,
                 self.kite.historical_data,
-                instrument,
+                instrument_token,
                 from_date.strftime("%Y-%m-%d"),
                 to_date.strftime("%Y-%m-%d"),
                 kite_interval,
             )
 
-            # Convert to standard format
+            # Convert to standard format required by candle service
             candles = []
             for candle in data:
                 candles.append(
                     {
-                        "time": candle["date"],
+                        "time": candle["date"],  # Timestamp of the candle
                         "open": candle["open"],
                         "high": candle["high"],
                         "low": candle["low"],
@@ -214,7 +218,9 @@ class KiteBroker(BrokerInterface):
                     }
                 )
 
-            logger.info(f"Fetched {len(candles)} historical candles for {instrument}")
+            logger.info(
+                f"Fetched {len(candles)} historical candles for {instrument_token}"
+            )
             return candles
 
         except Exception as e:
