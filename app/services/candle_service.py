@@ -1,5 +1,6 @@
 """Smart candle service with automatic gap detection and backfill."""
 
+import asyncpg
 from typing import List, Dict, Tuple
 from datetime import datetime, timedelta
 from loguru import logger
@@ -266,6 +267,7 @@ class CandleService:
                 end_time = max(c["time"] for c in candles)
 
                 # Refresh all timeframes: 1m → 5m → 15m → 1h → 1d
+                refreshed = []
                 for aggregate in [
                     "candles_1m",
                     "candles_5m",
@@ -273,16 +275,32 @@ class CandleService:
                     "candles_1h",
                     "candles_1d",
                 ]:
-                    refresh_query = f"""
-                        CALL refresh_continuous_aggregate('{aggregate}', 
-                            '{start_time.isoformat()}'::timestamptz, 
-                            '{end_time.isoformat()}'::timestamptz);
-                    """
-                    await conn.execute(refresh_query)
+                    try:
+                        refresh_query = f"""
+                            CALL refresh_continuous_aggregate('{aggregate}', 
+                                '{start_time.isoformat()}'::timestamptz, 
+                                '{end_time.isoformat()}'::timestamptz);
+                        """
+                        await conn.execute(refresh_query)
+                        refreshed.append(aggregate)
+                    except asyncpg.exceptions.InvalidParameterValueError as e:
+                        if "refresh window too small" in str(e):
+                            # Time range too small for this aggregate bucket size, skip it
+                            # The scheduled refresh policy will pick it up later
+                            logger.debug(
+                                f"Skipping {aggregate} refresh (window too small for bucket size)"
+                            )
+                        else:
+                            raise
 
-                logger.info(
-                    f"Refreshed all aggregates (1m, 5m, 15m, 1h, 1d) for {start_time} to {end_time}"
-                )
+                if refreshed:
+                    logger.info(
+                        f"Refreshed aggregates ({', '.join(refreshed)}) for {start_time} to {end_time}"
+                    )
+                else:
+                    logger.debug(
+                        f"No aggregates refreshed (windows too small), data stored in tick_data"
+                    )
 
         else:
             # For higher timeframes, we can't insert directly into continuous aggregates

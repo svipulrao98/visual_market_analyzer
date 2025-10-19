@@ -1,6 +1,7 @@
 """Background service to auto-fill gaps for recently accessed instruments."""
 
 import asyncio
+import asyncpg
 from datetime import datetime, timedelta, timezone
 from typing import Set
 from loguru import logger
@@ -146,6 +147,12 @@ async def auto_backfill_service():
 
             for token in instruments_to_check:
                 try:
+                    # Check if pool is still valid
+                    pool = await get_db_pool()
+                    if not pool or pool._closing:
+                        logger.warning("Database pool closing, stopping backfill cycle")
+                        break
+
                     # Check if backfill is needed (using DB tracking)
                     needs_backfill = await should_backfill(token)
                     if not needs_backfill:
@@ -177,6 +184,11 @@ async def auto_backfill_service():
                     # Rate limit: 2 seconds between instruments
                     await asyncio.sleep(2)
 
+                except asyncpg.exceptions.InterfaceError as e:
+                    if "pool is closing" in str(e):
+                        logger.warning("Database pool closing, stopping backfill cycle")
+                        break
+                    logger.error(f"❌ Database error for {token}: {e}")
                 except Exception as e:
                     logger.error(f"❌ Error backfilling {token}: {e}")
                     import traceback

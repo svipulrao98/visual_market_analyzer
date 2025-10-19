@@ -9,6 +9,7 @@ from app.database.connection import init_db, close_db
 from app.utils.logger import setup_logger
 from app.services.data_ingestion import data_ingestion_service
 from app.services.auto_backfill import start_auto_backfill
+from app.services.realtime_streaming import realtime_service
 
 
 @asynccontextmanager
@@ -24,11 +25,16 @@ async def lifespan(app: FastAPI):
     flush_task = asyncio.create_task(data_ingestion_service.start_flush_loop())
     await start_auto_backfill()
 
+    # Start real-time streaming (after backfill service initializes)
+    await asyncio.sleep(10)  # Give backfill time to populate backfill_status
+    await realtime_service.start_auto_streaming()
+
     yield
 
     # Shutdown
     flush_task.cancel()
     await data_ingestion_service.flush_buffer()
+    await realtime_service.stop_streaming()
     await close_db()
 
 

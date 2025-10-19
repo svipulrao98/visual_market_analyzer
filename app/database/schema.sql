@@ -227,3 +227,113 @@ CREATE TABLE IF NOT EXISTS subscribed_instruments (
     is_active BOOLEAN DEFAULT TRUE
 );
 
+-- ============================================================================
+-- HYBRID REAL-TIME QUERY FUNCTION
+-- ============================================================================
+-- This function provides near real-time OHLCV data by:
+-- 1. Using continuous aggregates for historical data (fast, pre-computed)
+-- 2. Using real-time aggregation on tick_data for recent data (live updates)
+-- ============================================================================
+
+CREATE OR REPLACE FUNCTION get_realtime_candles(
+    p_instrument_token INTEGER,
+    p_from_time TIMESTAMPTZ,
+    p_to_time TIMESTAMPTZ,
+    p_interval TEXT DEFAULT '1m'
+)
+RETURNS TABLE (
+    bucket TIMESTAMPTZ,
+    instrument_token INTEGER,
+    open NUMERIC,
+    high NUMERIC,
+    low NUMERIC,
+    close NUMERIC,
+    volume NUMERIC,
+    open_interest BIGINT
+) AS $$
+DECLARE
+    v_realtime_threshold TIMESTAMPTZ;
+    v_bucket_interval INTERVAL;
+BEGIN
+    -- Define real-time threshold (last 2 hours = use tick_data)
+    v_realtime_threshold := NOW() - INTERVAL '2 hours';
+    
+    -- Map interval string to PostgreSQL interval
+    v_bucket_interval := CASE p_interval
+        WHEN '1m' THEN INTERVAL '1 minute'
+        WHEN '5m' THEN INTERVAL '5 minutes'
+        WHEN '15m' THEN INTERVAL '15 minutes'
+        WHEN '1h' THEN INTERVAL '1 hour'
+        WHEN '1d' THEN INTERVAL '1 day'
+        ELSE INTERVAL '1 minute'
+    END;
+    
+    RETURN QUERY
+    WITH historical_data AS (
+        -- Historical data from continuous aggregates (fast)
+        SELECT 
+            c.bucket AS hist_bucket,
+            c.instrument_token AS hist_token,
+            c.open AS hist_open,
+            c.high AS hist_high,
+            c.low AS hist_low,
+            c.close AS hist_close,
+            c.volume AS hist_volume,
+            c.open_interest AS hist_oi
+        FROM (
+            SELECT candles_1m.bucket, candles_1m.instrument_token, candles_1m.open, candles_1m.high, 
+                   candles_1m.low, candles_1m.close, candles_1m.volume, candles_1m.open_interest
+            FROM candles_1m WHERE p_interval = '1m'
+            UNION ALL
+            SELECT candles_5m.bucket, candles_5m.instrument_token, candles_5m.open, candles_5m.high, 
+                   candles_5m.low, candles_5m.close, candles_5m.volume, candles_5m.open_interest
+            FROM candles_5m WHERE p_interval = '5m'
+            UNION ALL
+            SELECT candles_15m.bucket, candles_15m.instrument_token, candles_15m.open, candles_15m.high, 
+                   candles_15m.low, candles_15m.close, candles_15m.volume, candles_15m.open_interest
+            FROM candles_15m WHERE p_interval = '15m'
+            UNION ALL
+            SELECT candles_1h.bucket, candles_1h.instrument_token, candles_1h.open, candles_1h.high, 
+                   candles_1h.low, candles_1h.close, candles_1h.volume, candles_1h.open_interest
+            FROM candles_1h WHERE p_interval = '1h'
+            UNION ALL
+            SELECT candles_1d.bucket, candles_1d.instrument_token, candles_1d.open, candles_1d.high, 
+                   candles_1d.low, candles_1d.close, candles_1d.volume, candles_1d.open_interest
+            FROM candles_1d WHERE p_interval = '1d'
+        ) c
+        WHERE c.instrument_token = p_instrument_token
+          AND c.bucket >= p_from_time
+          AND c.bucket < LEAST(p_to_time, v_realtime_threshold)
+    ),
+    realtime_data AS (
+        -- Real-time data from tick_data (live, last 2 hours)
+        SELECT 
+            time_bucket(v_bucket_interval, tick_data.time) AS rt_bucket,
+            tick_data.instrument_token AS rt_token,
+            FIRST(tick_data.ltp, tick_data.time) AS rt_open,
+            MAX(tick_data.ltp) AS rt_high,
+            MIN(tick_data.ltp) AS rt_low,
+            LAST(tick_data.ltp, tick_data.time) AS rt_close,
+            MAX(tick_data.volume)::NUMERIC AS rt_volume,
+            MAX(tick_data.open_interest) AS rt_oi
+        FROM tick_data
+        WHERE tick_data.instrument_token = p_instrument_token
+          AND tick_data.time >= GREATEST(p_from_time, v_realtime_threshold)
+          AND tick_data.time < p_to_time
+        GROUP BY time_bucket(v_bucket_interval, tick_data.time), tick_data.instrument_token
+    )
+    -- Combine historical + real-time data
+    SELECT hist_bucket, hist_token, hist_open, hist_high, hist_low, hist_close, hist_volume, hist_oi
+    FROM historical_data
+    UNION ALL
+    SELECT rt_bucket, rt_token, rt_open, rt_high, rt_low, rt_close, rt_volume, rt_oi
+    FROM realtime_data
+    ORDER BY 1 ASC;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+COMMENT ON FUNCTION get_realtime_candles IS 
+'Hybrid function that returns OHLCV candles with near real-time updates. 
+Uses pre-computed continuous aggregates for historical data (>2h old) and 
+real-time aggregation on tick_data for recent data (<2h old).';
+

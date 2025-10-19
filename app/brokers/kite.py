@@ -85,14 +85,23 @@ class KiteBroker(BrokerInterface):
         self.callback = callback
         self._subscribed_instruments = instruments
 
+        # Store the asyncio event loop for use in Twisted callbacks
+        self._asyncio_loop = asyncio.get_running_loop()
+
         self.ticker = KiteTicker(
             api_key=settings.kite_api_key, access_token=settings.kite_access_token
         )
 
         def on_ticks(ws, ticks):
             """Handle incoming ticks."""
-            if self.callback:
-                asyncio.create_task(self._process_ticks(ticks))
+            if self.callback and self._asyncio_loop:
+                # Kite ticker uses Twisted, bridge to asyncio using the stored loop
+                try:
+                    asyncio.run_coroutine_threadsafe(
+                        self._process_ticks(ticks), self._asyncio_loop
+                    )
+                except Exception as e:
+                    logger.error(f"Error scheduling tick processing: {e}")
 
         def on_connect(ws, response):
             """Handle WebSocket connection."""

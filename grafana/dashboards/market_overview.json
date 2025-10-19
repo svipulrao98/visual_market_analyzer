@@ -140,7 +140,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "SELECT\n  bucket AS time,\n  open,\n  high,\n  low,\n  close,\n  volume,\n  open_interest\nFROM ${timeframe:raw}\nWHERE\n  $__timeFilter(bucket) AND\n  instrument_token = ${instrument_token}\nORDER BY bucket",
+          "rawSql": "-- HYBRID REAL-TIME QUERY: Combines pre-computed aggregates + live tick data\nSELECT\n  bucket AS time,\n  open,\n  high,\n  low,\n  close,\n  volume,\n  open_interest\nFROM get_realtime_candles(\n  ${instrument_token},\n  $__timeFrom()::timestamptz,\n  $__timeTo()::timestamptz,\n  CASE '${timeframe:raw}'\n    WHEN 'candles_1m' THEN '1m'\n    WHEN 'candles_5m' THEN '5m'\n    WHEN 'candles_15m' THEN '15m'\n    WHEN 'candles_1h' THEN '1h'\n    WHEN 'candles_1d' THEN '1d'\n    ELSE '1m'\n  END\n)\nORDER BY bucket",
           "refId": "A",
           "select": [
             [
