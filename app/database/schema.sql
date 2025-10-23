@@ -181,34 +181,7 @@ SELECT add_continuous_aggregate_policy('candles_1h',
 -- Retention policy (drop data older than 1 year)
 SELECT add_retention_policy('candles_1h', INTERVAL '1 year', if_not_exists => TRUE);
 
--- ============================================
--- CONTINUOUS AGGREGATE: 1-DAY CANDLES
--- ============================================
-CREATE MATERIALIZED VIEW IF NOT EXISTS candles_1d
-WITH (timescaledb.continuous) AS
-SELECT 
-    time_bucket('1 day', bucket) AS bucket,
-    instrument_token,
-    FIRST(open, bucket) AS open,
-    MAX(high) AS high,
-    MIN(low) AS low,
-    LAST(close, bucket) AS close,
-    SUM(volume) AS volume,
-    LAST(open_interest, bucket) AS open_interest
-FROM candles_1h
-GROUP BY time_bucket('1 day', bucket), instrument_token;
-
--- Index for faster queries
-CREATE INDEX IF NOT EXISTS idx_candles_1d_instrument_bucket 
-    ON candles_1d (instrument_token, bucket DESC);
-
-SELECT add_continuous_aggregate_policy('candles_1d',
-    start_offset => INTERVAL '3 days',
-    end_offset => INTERVAL '1 day',
-    schedule_interval => INTERVAL '1 day',
-    if_not_exists => TRUE);
-
--- No retention policy for daily candles (keep forever)
+-- NOTE: 1-day candles removed - only 1m, 5m, 15m, 1h supported for intraday trading
 
 -- ============================================
 -- COMMENTS
@@ -218,7 +191,6 @@ COMMENT ON MATERIALIZED VIEW candles_1m IS '1-minute OHLCV candles. Auto-aggrega
 COMMENT ON MATERIALIZED VIEW candles_5m IS '5-minute OHLCV candles. Auto-aggregated from candles_1m. Retained for 90 days.';
 COMMENT ON MATERIALIZED VIEW candles_15m IS '15-minute OHLCV candles. Auto-aggregated from candles_5m. Retained for 6 months.';
 COMMENT ON MATERIALIZED VIEW candles_1h IS '1-hour OHLCV candles. Auto-aggregated from candles_15m. Retained for 1 year.';
-COMMENT ON MATERIALIZED VIEW candles_1d IS '1-day OHLCV candles. Auto-aggregated from candles_1h. Retained indefinitely.';
 
 -- Subscribed instruments (tracking which instruments to stream)
 CREATE TABLE IF NOT EXISTS subscribed_instruments (
@@ -264,7 +236,6 @@ BEGIN
         WHEN '5m' THEN INTERVAL '5 minutes'
         WHEN '15m' THEN INTERVAL '15 minutes'
         WHEN '1h' THEN INTERVAL '1 hour'
-        WHEN '1d' THEN INTERVAL '1 day'
         ELSE INTERVAL '1 minute'
     END;
     
@@ -296,10 +267,6 @@ BEGIN
             SELECT candles_1h.bucket, candles_1h.instrument_token, candles_1h.open, candles_1h.high, 
                    candles_1h.low, candles_1h.close, candles_1h.volume, candles_1h.open_interest
             FROM candles_1h WHERE p_interval = '1h'
-            UNION ALL
-            SELECT candles_1d.bucket, candles_1d.instrument_token, candles_1d.open, candles_1d.high, 
-                   candles_1d.low, candles_1d.close, candles_1d.volume, candles_1d.open_interest
-            FROM candles_1d WHERE p_interval = '1d'
         ) c
         WHERE c.instrument_token = p_instrument_token
           AND c.bucket >= p_from_time
@@ -335,5 +302,6 @@ $$ LANGUAGE plpgsql STABLE;
 COMMENT ON FUNCTION get_realtime_candles IS 
 'Hybrid function that returns OHLCV candles with near real-time updates. 
 Uses pre-computed continuous aggregates for historical data (>2h old) and 
-real-time aggregation on tick_data for recent data (<2h old).';
+real-time aggregation on tick_data for recent data (<2h old).
+Supports intervals: 1m, 5m, 15m, 1h';
 

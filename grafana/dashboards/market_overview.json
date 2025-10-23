@@ -140,7 +140,7 @@
           "group": [],
           "metricColumn": "none",
           "rawQuery": true,
-          "rawSql": "-- HYBRID REAL-TIME QUERY: Combines pre-computed aggregates + live tick data\nSELECT\n  bucket AS time,\n  open,\n  high,\n  low,\n  close,\n  volume,\n  open_interest\nFROM get_realtime_candles(\n  ${instrument_token},\n  $__timeFrom()::timestamptz,\n  $__timeTo()::timestamptz,\n  CASE '${timeframe:raw}'\n    WHEN 'candles_1m' THEN '1m'\n    WHEN 'candles_5m' THEN '5m'\n    WHEN 'candles_15m' THEN '15m'\n    WHEN 'candles_1h' THEN '1h'\n    WHEN 'candles_1d' THEN '1d'\n    ELSE '1m'\n  END\n)\nORDER BY bucket",
+          "rawSql": "-- HYBRID REAL-TIME QUERY: Combines pre-computed aggregates + live tick data\nSELECT\n  bucket AS time,\n  open,\n  high,\n  low,\n  close,\n  volume,\n  open_interest\nFROM get_realtime_candles(\n  ${instrument_token},\n  $__timeFrom()::timestamptz,\n  $__timeTo()::timestamptz,\n  CASE '${timeframe:raw}'\n    WHEN 'candles_1m' THEN '1m'\n    WHEN 'candles_5m' THEN '5m'\n    WHEN 'candles_15m' THEN '15m'\n    WHEN 'candles_1h' THEN '1h'\n    ELSE '1m'\n  END\n)\nORDER BY bucket",
           "refId": "A",
           "select": [
             [
@@ -181,7 +181,7 @@
       "type": "candlestick"
     }
   ],
-  "refresh": "5s",
+  "refresh": "1s",
   "schemaVersion": 38,
   "style": "dark",
   "tags": ["trading", "market-data"],
@@ -197,19 +197,20 @@
           "type": "grafana-postgresql-datasource",
           "uid": "P40AE60E18F02DE32"
         },
-        "definition": "SELECT CONCAT(symbol, ' - ', segment, ' (', exchange, ')') AS __text, token AS __value FROM instruments WHERE segment IN ('INDICES', 'NSE', 'NFO-FUT') ORDER BY CASE segment WHEN 'INDICES' THEN 1 WHEN 'NSE' THEN 2 ELSE 3 END, symbol LIMIT 1000",
+        "definition": "SELECT CONCAT(symbol, ' - ', segment, ' (', exchange, ')') AS __text, token AS __value FROM instruments WHERE segment IN ('INDICES', 'NSE', 'NFO-FUT') AND symbol NOT LIKE '%-SG' AND symbol NOT LIKE '%-SM' ORDER BY CASE segment WHEN 'INDICES' THEN 1 WHEN 'NFO-FUT' THEN 2 WHEN 'NSE' THEN 3 ELSE 4 END, symbol",
         "hide": 0,
         "includeAll": false,
-        "label": "🔍 Instrument (Type to search 1000+ stocks)",
+        "label": "🔍 Instrument (Type to search - instant filter)",
         "multi": false,
         "name": "instrument_token",
         "options": [],
-        "query": "SELECT CONCAT(symbol, ' - ', segment, ' (', exchange, ')') AS __text, token AS __value FROM instruments WHERE segment IN ('INDICES', 'NSE', 'NFO-FUT') ORDER BY CASE segment WHEN 'INDICES' THEN 1 WHEN 'NSE' THEN 2 ELSE 3 END, symbol LIMIT 1000",
+        "query": "SELECT CONCAT(symbol, ' - ', segment, ' (', exchange, ')') AS __text, token AS __value FROM instruments WHERE segment IN ('INDICES', 'NSE', 'NFO-FUT') AND symbol NOT LIKE '%-SG' AND symbol NOT LIKE '%-SM' ORDER BY CASE segment WHEN 'INDICES' THEN 1 WHEN 'NFO-FUT' THEN 2 WHEN 'NSE' THEN 3 ELSE 4 END, symbol",
         "refresh": 1,
         "regex": "",
         "skipUrlSync": false,
-        "sort": 1,
-        "type": "query"
+        "sort": 0,
+        "type": "query",
+        "allValue": null
       },
       {
         "current": {
@@ -242,14 +243,9 @@
             "selected": false,
             "text": "1h",
             "value": "candles_1h"
-          },
-          {
-            "selected": false,
-            "text": "1d",
-            "value": "candles_1d"
           }
         ],
-        "query": "1m : candles_1m, 5m : candles_5m, 15m : candles_15m, 1h : candles_1h, 1d : candles_1d",
+        "query": "1m : candles_1m, 5m : candles_5m, 15m : candles_15m, 1h : candles_1h",
         "queryValue": "",
         "skipUrlSync": false,
         "type": "custom"
@@ -257,12 +253,12 @@
     ]
   },
   "time": {
-    "from": "now-7d",
-    "to": "now"
+    "from": "now/d+9h",
+    "to": "now+15m"
   },
   "timepicker": {
-    "refresh_intervals": ["5s", "10s", "30s", "1m", "5m"],
-    "time_options": ["5m", "15m", "30m", "1h"],
+    "refresh_intervals": ["1s", "5s", "10s", "30s", "1m", "5m"],
+    "time_options": ["1s", "5m", "15m", "30m", "1h"],
     "hidden": false
   },
   "timezone": "browser",

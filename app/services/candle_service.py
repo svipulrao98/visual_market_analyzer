@@ -76,13 +76,12 @@ class CandleService:
         """Query candles from TimescaleDB continuous aggregates."""
         pool = await get_db_pool()
 
-        # Map interval to table
+        # Map interval to table (only 1m, 5m, 15m, 1h supported)
         table_map = {
             "1m": "candles_1m",
             "5m": "candles_5m",
             "15m": "candles_15m",
             "1h": "candles_1h",
-            "1d": "candles_1d",
         }
 
         table = table_map.get(interval, "candles_1m")
@@ -234,22 +233,81 @@ class CandleService:
         pool = await get_db_pool()
 
         if interval == "1m":
-            # Store as tick data, let continuous aggregates do their magic
+            # Store OHLC as multiple ticks to preserve price action
+            # This allows continuous aggregates to correctly calculate OHLC
             async with pool.acquire() as conn:
-                records = [
-                    (
-                        c["time"],
-                        instrument_token,
-                        c["close"],  # Use close price as LTP
-                        c["volume"],
-                        c.get("open_interest", 0),
-                        None,  # bid_price
-                        None,  # ask_price
-                        None,  # bid_qty
-                        None,  # ask_qty
+                records = []
+                for c in candles:
+                    candle_time = c["time"]
+                    # Store 4 ticks per candle to preserve OHLC:
+                    # 1. Open at start of minute (00 seconds)
+                    records.append(
+                        (
+                            candle_time,
+                            instrument_token,
+                            c["open"],
+                            c["volume"],
+                            c.get("open_interest", 0),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
                     )
-                    for c in candles
-                ]
+                    # 2. High at 20 seconds
+                    records.append(
+                        (
+                            (
+                                candle_time.replace(second=20)
+                                if candle_time.second == 0
+                                else candle_time
+                            ),
+                            instrument_token,
+                            c["high"],
+                            0,  # Don't double-count volume
+                            c.get("open_interest", 0),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    )
+                    # 3. Low at 40 seconds
+                    records.append(
+                        (
+                            (
+                                candle_time.replace(second=40)
+                                if candle_time.second == 0
+                                else candle_time
+                            ),
+                            instrument_token,
+                            c["low"],
+                            0,  # Don't double-count volume
+                            c.get("open_interest", 0),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    )
+                    # 4. Close at 59 seconds
+                    records.append(
+                        (
+                            (
+                                candle_time.replace(second=59)
+                                if candle_time.second == 0
+                                else candle_time
+                            ),
+                            instrument_token,
+                            c["close"],
+                            0,  # Don't double-count volume
+                            c.get("open_interest", 0),
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                    )
 
                 await conn.executemany(
                     """
@@ -266,14 +324,13 @@ class CandleService:
                 start_time = min(c["time"] for c in candles)
                 end_time = max(c["time"] for c in candles)
 
-                # Refresh all timeframes: 1m → 5m → 15m → 1h → 1d
+                # Refresh all timeframes: 1m → 5m → 15m → 1h
                 refreshed = []
                 for aggregate in [
                     "candles_1m",
                     "candles_5m",
                     "candles_15m",
                     "candles_1h",
-                    "candles_1d",
                 ]:
                     try:
                         refresh_query = f"""

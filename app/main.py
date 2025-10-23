@@ -10,6 +10,7 @@ from app.utils.logger import setup_logger
 from app.services.data_ingestion import data_ingestion_service
 from app.services.auto_backfill import start_auto_backfill
 from app.services.realtime_streaming import realtime_service
+from app.services.instruments import InstrumentService
 
 
 @asynccontextmanager
@@ -19,9 +20,18 @@ async def lifespan(app: FastAPI):
     setup_logger()
     await init_db()
 
-    # Start background tasks
+    # Sync instruments from broker (on first startup or if empty)
     import asyncio
+    from loguru import logger
 
+    try:
+        logger.info("📥 syncing instruments from broker...")
+        synced = await InstrumentService.sync_instruments_from_broker()
+        logger.info(f"✅ Synced {synced} instruments")
+    except Exception as e:
+        logger.error(f"Failed to sync instruments: {e}")
+
+    # Start background tasks
     flush_task = asyncio.create_task(data_ingestion_service.start_flush_loop())
     await start_auto_backfill()
 
